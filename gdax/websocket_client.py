@@ -13,11 +13,11 @@ import hashlib
 import time
 from threading import Thread
 from websocket import create_connection, WebSocketConnectionClosedException
-from pymongo import MongoClient
+
 
 class WebsocketClient(object):
-    def __init__(self, url="wss://ws-feed.gdax.com", products=None, message_type="subscribe", mongo_collection=None,
-                 should_print=True, auth=False, api_key="", api_secret="", api_passphrase="", channels=None):
+    def __init__(self, url="wss://ws-feed.gdax.com", products=None, message_type="subscribe", auth=False, api_key="",
+                 api_secret="", api_passphrase="", channels=None):
 
         self.url = url
         self.products = products
@@ -31,8 +31,6 @@ class WebsocketClient(object):
         self.api_key = api_key
         self.api_secret = api_secret
         self.api_passphrase = api_passphrase
-        self.should_print = should_print
-        self.mongo_collection = mongo_collection
 
     def start(self):
         def _go():
@@ -80,7 +78,6 @@ class WebsocketClient(object):
             sub_params = {"type": "heartbeat", "on": False}
         self.ws.send(json.dumps(sub_params))
 
-
     def _listen(self):
         while not self.stop:
             try:
@@ -112,23 +109,17 @@ class WebsocketClient(object):
         self.thread.join()
 
     def on_open(self):
-        if self.should_print:
-            print("-- Subscribed! --\n")
+        pass
 
     def on_close(self):
-        if self.should_print:
-            print("\n-- Socket Closed --")
+        pass
 
     def on_message(self, msg):
-        if self.should_print:
-            print(msg)
-        if self.mongo_collection: # dump JSON to given mongo collection
-            self.mongo_collection.insert_one(msg)
+        pass
 
     def on_error(self, e, data=None):
         self.error = e
         self.stop = True
-        print('{} - data: {}'.format(e, data))
 
 
 if __name__ == "__main__":
