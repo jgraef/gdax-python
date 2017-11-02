@@ -31,6 +31,7 @@ class WebsocketClient(object):
         self.api_key = api_key
         self.api_secret = api_secret
         self.api_passphrase = api_passphrase
+        self.last_ping = 0
 
     def start(self):
         def _go():
@@ -81,9 +82,14 @@ class WebsocketClient(object):
     def _listen(self):
         while not self.stop:
             try:
-                if int(time.time() % 30) == 0:
+                # NOTE: This should be replaced with time.monotonic, since time.time() can run backwards. On the other
+                #       hand, time.monotonic is only guaranteed to be available since Python 3.5
+                t = time.time()
+                if t - self.last_ping > 30:
                     # Set a 30 second ping to keep connection alive
                     self.ws.ping("keepalive")
+                    self.last_ping = t
+
                 data = self.ws.recv()
                 msg = json.loads(data)
             except ValueError as e:
