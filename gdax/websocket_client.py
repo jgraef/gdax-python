@@ -16,103 +16,66 @@ from websocket import create_connection, WebSocketConnectionClosedException
 
 
 class WebsocketClient(object):
-    def __init__(self, url="wss://ws-feed.gdax.com", products=None, message_type="subscribe", auth=False, api_key="",
-                 api_secret="", api_passphrase="", channels=None):
+    def __init__(self, url="wss://ws-feed.gdax.com", auth=False, api_key="",
+                 api_secret="", api_passphrase=""):
 
         self.url = url
-        self.products = products
-        self.channels = channels
-        self.type = message_type
-        self.stop = False
+        self._stop = False
         self.error = None
-        self.ws = None
-        self.thread = None
+        self._ws = None
+        self._thread = None
         self.auth = auth
         self.api_key = api_key
-        self.api_secret = api_secret
+        self.api_secret = base64.b64decode(api_secret)
         self.api_passphrase = api_passphrase
         self.last_ping = 0
 
     def start(self):
+        self._connect()
+
         def _go():
-            self._connect()
             self._listen()
             self._disconnect()
 
-        self.stop = False
-        self.on_open()
-        self.thread = Thread(target=_go)
-        self.thread.start()
+        self._stop = False
+        self._thread = Thread(target=_go)
+        self._thread.start()
 
     def _connect(self):
-        if self.products is None:
-            self.products = ["BTC-USD"]
-        elif not isinstance(self.products, list):
-            self.products = [self.products]
-
-        if self.url[-1] == "/":
-            self.url = self.url[:-1]
-
-        if self.channels is None:
-            sub_params = {'type': 'subscribe', 'product_ids': self.products}
-        else:
-            sub_params = {'type': 'subscribe', 'product_ids': self.products, 'channels': self.channels}
-
-        if self.auth:
-            timestamp = str(time.time())
-            message = timestamp + 'GET' + '/users/self'
-            message = message.encode('ascii')
-            hmac_key = base64.b64decode(self.api_secret)
-            signature = hmac.new(hmac_key, message, hashlib.sha256)
-            signature_b64 = base64.b64encode(signature.digest())
-            sub_params['signature'] = signature_b64
-            sub_params['key'] = self.api_key
-            sub_params['passphrase'] = self.api_passphrase
-            sub_params['timestamp'] = timestamp
-
-        self.ws = create_connection(self.url)
-        self.ws.send(json.dumps(sub_params))
-
-        if self.type == "heartbeat":
-            sub_params = {"type": "heartbeat", "on": True}
-        else:
-            sub_params = {"type": "heartbeat", "on": False}
-        self.ws.send(json.dumps(sub_params))
+        self._ws = create_connection(self.url)
+        self.on_open()
 
     def _listen(self):
-        while not self.stop:
-            try:
-                # NOTE: This should be replaced with time.monotonic, since time.time() can run backwards. On the other
-                #       hand, time.monotonic is only guaranteed to be available since Python 3.5
-                t = time.time()
-                if t - self.last_ping > 30:
-                    # Set a 30 second ping to keep connection alive
-                    self.ws.ping("keepalive")
-                    self.last_ping = t
+        while not self._stop:
+            # NOTE: This should be replaced with time.monotonic, since time.time() can run backwards. On the other
+            #       hand, time.monotonic is only guaranteed to be available since Python 3.5
+            t = time.time()
+            if t - self.last_ping > 30:
+                # Set a 30 second ping to keep connection alive
+                self._ws.ping("keepalive")
+                self.last_ping = t
 
-                data = self.ws.recv()
+            data = self._ws.recv()
+            if not data:
+                # socket closed
+                break
+
+            try:
                 msg = json.loads(data)
             except ValueError as e:
-                self.on_error(e)
-            except Exception as e:
+                # JSON deserialization error
                 self.on_error(e)
             else:
                 self.on_message(msg)
 
     def _disconnect(self):
-        if self.type == "heartbeat":
-            self.ws.send(json.dumps({"type": "heartbeat", "on": False}))
-        try:
-            if self.ws:
-                self.ws.close()
-        except WebSocketConnectionClosedException as e:
-            pass
-
+        if self._ws:
+            self._ws.close()
         self.on_close()
 
     def close(self):
-        self.stop = True
-        self.thread.join()
+        self._stop = True
+        self._thread.join()
 
     def on_open(self):
         pass
@@ -125,7 +88,32 @@ class WebsocketClient(object):
 
     def on_error(self, e, data=None):
         self.error = e
-        self.stop = True
+        self._stop = True
+
+    def sign_message(self, msg):
+        timestamp = str(int(time.time()))
+        message = "{!s}GET/users/self/verify".format(timestamp)
+        signature = hmac.new(self.api_secret, message.encode(), hashlib.sha256)
+        msg["signature"] = base64.b64encode(signature.digest()).decode()
+        msg["key"] = self.api_key
+        msg["passphrase"] = self.api_passphrase
+        msg["timestamp"] = timestamp
+
+    def send_message(self, msg, sign=False):
+        if self._ws is None:
+            raise ConnectionError("Not connected")
+        if self.auth and sign:
+            self.sign_message(msg)
+        self._ws.send(json.dumps(msg))
+
+    def subscribe(self, name, products):
+        self.send_message({
+            "type": "subscribe",
+            "channels": [{
+                "name": name,
+                "product_ids": products
+            }]
+        }, sign=True)
 
 
 if __name__ == "__main__":
@@ -134,9 +122,9 @@ if __name__ == "__main__":
     import time
 
     class MyWebsocketClient(gdax.WebsocketClient):
+        message_count = 0
+
         def on_open(self):
-            self.url = "wss://ws-feed.gdax.com/"
-            self.products = ["BTC-USD", "ETH-USD"]
             self.message_count = 0
             print("Let's count the messages!")
 
@@ -149,7 +137,8 @@ if __name__ == "__main__":
 
     wsClient = MyWebsocketClient()
     wsClient.start()
-    print(wsClient.url, wsClient.products)
+    wsClient.subscribe("ticker", ["BTC-EUR"])
+
     try:
         while True:
             print("\nMessageCount =", "%i \n" % wsClient.message_count)
