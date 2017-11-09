@@ -1,7 +1,7 @@
 # gdax/WebsocketClient.py
 # original author: Daniel Paquin
 # mongo "support" added by Drew Rice
-#
+# rewritten by Janosch Gräf
 #
 # Template object to receive messages from the gdax Websocket Feed
 
@@ -15,10 +15,58 @@ from threading import Thread
 from websocket import create_connection, WebSocketConnectionClosedException
 
 
+
+class WebsocketListener(object):
+    def on_message(self, msg):
+        pass
+
+    def on_heartbeat(self, msg):
+        pass
+
+    def on_ticker(self, msg):
+        pass
+
+    def on_snapshot(self, msg):
+        pass
+
+    def on_l2update(self, msg):
+        pass
+
+    def on_received(self, msg):
+        pass
+
+    def on_open(self, msg):
+        pass
+
+    def on_done(self, msg):
+        pass
+
+    def on_match(self, msg):
+        pass
+
+    def on_change(self, msg):
+        pass
+
+    def on_margin_profile_update(self, msg):
+        pass
+
+    def on_activate(self, msg):
+        pass
+
+    def on_connect(self):
+        pass
+
+    def on_disconnect(self):
+        pass
+
+
 class WebsocketClient(object):
-    def __init__(self, url="wss://ws-feed.gdax.com", auth=False, api_key="",
+    def __init__(self, listener = None, url="wss://ws-feed.gdax.com", auth=False, api_key="",
                  api_secret="", api_passphrase=""):
 
+        self.listeners = set()
+        if listener is not None:
+            self.listeners.add(listener)
         self.url = url
         self._stop = False
         self.error = None
@@ -29,9 +77,11 @@ class WebsocketClient(object):
         self.api_secret = base64.b64decode(api_secret)
         self.api_passphrase = api_passphrase
         self.last_ping = 0
-
-    def start(self):
         self._connect()
+
+    def _connect(self):
+        self._ws = create_connection(self.url)
+        self.on_open()
 
         def _go():
             self._listen()
@@ -40,10 +90,6 @@ class WebsocketClient(object):
         self._stop = False
         self._thread = Thread(target=_go)
         self._thread.start()
-
-    def _connect(self):
-        self._ws = create_connection(self.url)
-        self.on_open()
 
     def _listen(self):
         while not self._stop:
@@ -78,13 +124,19 @@ class WebsocketClient(object):
         self._thread.join()
 
     def on_open(self):
-        pass
+        for listener in self.listeners:
+            listener.on_connect()
 
     def on_close(self):
-        pass
+        for listener in self.listeners:
+            listener.on_disconnect()
 
     def on_message(self, msg):
-        pass
+        for listener in self.listeners:
+            listener.on_message(msg)
+            method = getattr(listener, "on_" + msg["type"], None)
+            if callable(method):
+                method(msg)
 
     def on_error(self, e, data=None):
         self.error = e
@@ -115,6 +167,12 @@ class WebsocketClient(object):
             }]
         }, sign=True)
 
+    def add_listener(self, listener):
+        self.listeners.add(listener)
+
+    def remove_listener(self, listener):
+        self.listeners.remove(listener)
+
 
 if __name__ == "__main__":
     import sys
@@ -136,7 +194,6 @@ if __name__ == "__main__":
             print("-- Goodbye! --")
 
     wsClient = MyWebsocketClient()
-    wsClient.start()
     wsClient.subscribe("ticker", ["BTC-EUR"])
 
     try:
